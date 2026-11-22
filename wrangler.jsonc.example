@@ -1,0 +1,153 @@
+// Copy to wrangler.jsonc (gitignored) and fill in every <PLACEHOLDER>. Never commit wrangler.jsonc.
+// Secrets (GOOGLE_CLIENT_SECRET, RESEND_API_KEY, CF_TOKEN, TURNSTILE_SECRET_KEY, ...) do NOT go here:
+// set them with `npx wrangler secret put NAME`. See INSTALL.md.
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	// The Worker must be named "fmail": the app creates Email Routing rules that point at this name
+	// (getEmailWorkerName() in src/lib/cloudflare-api-utils.ts).
+	"name": "fmail",
+	// Cloudflare account ID (or delete this line and export CLOUDFLARE_ACCOUNT_ID instead).
+	"account_id": "<YOUR_CLOUDFLARE_ACCOUNT_ID>",
+	// The webmail hostname, e.g. mail.example.com. Its zone must be on the same Cloudflare account.
+	// Wrangler creates the DNS record and certificate on deploy. Remove this block to use the *.workers.dev URL.
+	"routes": [{ "pattern": "<mail.your-domain.com>", "custom_domain": true }],
+	"main": "./worker.ts",
+	"compatibility_date": "2026-05-20",
+	"keep_vars": true,
+	"vars": {
+		"MAILFLARE_SELF_LICENSED": "1",
+		// Public HTTPS origin of the webmail host.
+		"APP_URL": "https://<mail.your-domain.com>",
+		// Host-specific branding and Google sign-up. They apply only on APP_HOST (same value as the route above).
+		"APP_HOST": "<mail.your-domain.com>",
+		"APP_NAME": "<Your App Name>",
+		// Mail domain that Google sign-ups get mailboxes on, e.g. your-domain.com. Delete the line to keep
+		// Google sign-up off (it also needs the GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET Worker secrets).
+		"GOOGLE_SIGNUP_DOMAIN": "<your-domain.com>",
+		// Optional: Cloudflare account ID, used to register Gmail forwarding destination addresses and to list
+		// Workers AI models. Needed when the zone lookup cannot find the account.
+		"CF_ACCOUNT_ID": "<YOUR_CLOUDFLARE_ACCOUNT_ID>",
+		// Optional: serve more branded hosts from this Worker (add their routes too).
+		// "HOST_BRANDING": { "mail.other-domain.com": { "appName": "Other", "googleSignupDomain": "other-domain.com" } },
+	},
+	"compatibility_flags": [
+		"nodejs_compat",
+		"global_fetch_strictly_public"
+	],
+	"assets": {
+		"binding": "ASSETS",
+		"not_found_handling": "none",
+	},
+	"images": {
+		"binding": "IMAGES",
+	},
+	"services": [
+		{
+			"binding": "WORKER_SELF_REFERENCE",
+			"service": "fmail",
+		},
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "REALTIME",
+				"class_name": "RealtimeHub",
+			},
+		],
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"RealtimeHub",
+			],
+		},
+	],
+	"triggers": {
+		"crons": ["0 2 * * *", "*/5 * * * *"],
+	},
+	// Rate limiters need no resource to create: the namespace_id is just a number you choose, unique in your account.
+	"ratelimits": [
+		{
+			"name": "LOGIN_RATE_LIMIT",
+			"namespace_id": "1001",
+			"simple": {
+				"limit": 20,
+				"period": 60,
+			},
+		},
+		{
+			"name": "DEVICE_LOGIN_RATE_LIMIT",
+			"namespace_id": "1003",
+			"simple": { "limit": 10, "period": 60 },
+		},
+		{
+			"name": "AGENT_RATE_LIMIT",
+			"namespace_id": "1002",
+			"simple": { "limit": 120, "period": 60 },
+		},
+	],
+	"observability": {
+		"enabled": true,
+		"traces": { "enabled": true },
+	},
+	"upload_source_maps": true,
+	"send_email": [
+		{
+			"name": "EMAIL",
+			"remote": false,
+		},
+	],
+	"ai": { "binding": "AI", "remote": true },
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "fmail",
+			"database_id": "<YOUR_D1_DATABASE_ID>",
+			"migrations_dir": "drizzle/migrations",
+		},
+	],
+	"r2_buckets": [
+		{
+			"binding": "BUCKET",
+			"bucket_name": "fmail-raw",
+		},
+	],
+	"queues": {
+		"producers": [
+			{
+				"binding": "INBOUND_QUEUE",
+				"queue": "fmail-inbound",
+			},
+			{
+				"binding": "OUTBOUND_QUEUE",
+				"queue": "fmail-outbound",
+			},
+			{
+				"binding": "AGENT_QUEUE",
+				"queue": "fmail-agent",
+			},
+		],
+		"consumers": [
+			{
+				"queue": "fmail-inbound",
+				"max_batch_size": 5,
+				// New mail should reach the inbox at once; do not wait up to 5 s for a batch to fill.
+				"max_batch_timeout": 1,
+				"max_retries": 3,
+			},
+			{
+				"queue": "fmail-outbound",
+				"max_batch_size": 5,
+				// Sends wait out the undo window already; do not also wait for a batch to fill.
+				"max_batch_timeout": 1,
+				"max_retries": 3,
+			},
+			{
+				"queue": "fmail-agent",
+				"max_batch_size": 1,
+				"max_retries": 3,
+			},
+		],
+	},
+}
